@@ -283,7 +283,9 @@ TheLauncherDesklet.prototype = {
         this._lastThemeState = null;
         this._initializePlacementSettings();
 
-        this._applyStoragePath(false);
+        // First launch / new install: create ~/.local/share/thelauncher/<subdirectory>
+        // (default: .../default) so Configure → Browse is not required to get started.
+        this._applyStoragePath(true);
         this._setupPlacement();
         this.setHeader(_("TheLauncher"));
         this._onSettingsChanged();
