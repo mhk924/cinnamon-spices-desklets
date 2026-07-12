@@ -328,6 +328,73 @@ TheLauncherDesklet.prototype = {
         }
     },
 
+    _getLayoutHeight: function(actor) {
+        if (!actor || actor.is_finalized()) {
+            return 0;
+        }
+
+        try {
+            const width = this._getLayoutWidth(actor);
+            const forWidth = width > 0 ? width : -1;
+            const [, naturalHeight] = actor.get_preferred_height(forWidth);
+            return Math.max(0, Math.round(naturalHeight));
+        } catch (e) {
+            return 0;
+        }
+    },
+
+    _computeGridHeight: function(gridContainer, usedColumns) {
+        if (!gridContainer) {
+            return 0;
+        }
+
+        const children = gridContainer.get_children() || [];
+        if (children.length === 0) {
+            return 0;
+        }
+
+        const columns = Math.max(1, usedColumns || this._lastUsedColumns || 1);
+        const spacing = Math.round(this.row_spacing);
+        let height = 0;
+        const rows = Math.ceil(children.length / columns);
+
+        for (let row = 0; row < rows; row++) {
+            let rowHeight = 0;
+            const rowStart = row * columns;
+            const rowEnd = Math.min(rowStart + columns, children.length);
+            for (let i = rowStart; i < rowEnd; i++) {
+                rowHeight = Math.max(rowHeight, this._getLayoutHeight(children[i]));
+            }
+            height += rowHeight;
+        }
+
+        if (rows > 1) {
+            height += (rows - 1) * spacing;
+        }
+
+        return height;
+    },
+
+    _computePanelBoxHeight: function(panelBox, usedColumns) {
+        if (!panelBox) {
+            return 0;
+        }
+
+        let height = this._getDeskletPadding();
+        const grid = this._findGridContainer(panelBox);
+
+        panelBox.get_children().forEach(child => {
+            if (child === grid) {
+                const gridHeight = this._computeGridHeight(grid, usedColumns);
+                height += gridHeight > 0 ? gridHeight : this._getLayoutHeight(child);
+                return;
+            }
+            height += this._getLayoutHeight(child);
+        });
+
+        return height;
+    },
+
     _getPreferredWidth: function(actor) {
         if (!this._isLiveActor(actor)) {
             return 0;
@@ -349,15 +416,24 @@ TheLauncherDesklet.prototype = {
         }
     },
 
+    _getTileTextWidth: function() {
+        const iconWidth = this.icon_size > 0 ? this.icon_size : 0;
+        const padding = Math.max(0, Math.round(this.text_width_padding || 0));
+        if (iconWidth > 0) {
+            return iconWidth + padding;
+        }
+
+        return Math.max(padding, Math.round(BASE_TILE_WIDTH * 0.85));
+    },
+
     _getItemMinWidth: function() {
         if (this._isListLayout()) {
             return 0;
         }
 
-        const buttonPadding = 16;
         const iconWidth = this.icon_size > 0 ? this.icon_size : 0;
         const textWidth = this.show_text ? this._getTileTextWidth() : 0;
-        return Math.max(iconWidth, textWidth, Math.round(this._getTileWidth() * 0.75)) + buttonPadding;
+        return Math.max(iconWidth, textWidth) + 16;
     },
 
     _getItemLayoutWidth: function(itemActor) {
@@ -588,6 +664,12 @@ TheLauncherDesklet.prototype = {
         if (this._isFixedContentFit() && this.max_height > 0) {
             this.actor.set_height(this.max_height);
         } else {
+            const height = this._computePanelBoxHeight(this._panelBox, this._lastUsedColumns);
+            if (height > 0) {
+                this._panelBox.set_height(height);
+            } else {
+                this._panelBox.set_height(-1);
+            }
             this.actor.set_height(-1);
         }
     },
@@ -636,7 +718,13 @@ TheLauncherDesklet.prototype = {
         } else {
             panelBox.set_width(-1);
         }
-        panelBox.set_height(-1);
+
+        const height = this._computePanelBoxHeight(panelBox, usedColumns);
+        if (height > 0) {
+            panelBox.set_height(height);
+        } else {
+            panelBox.set_height(-1);
+        }
     },
 
     on_desklet_reloaded: function() {
@@ -1655,22 +1743,12 @@ TheLauncherDesklet.prototype = {
         return style;
     },
 
-    _getTileTextWidth: function() {
-        const iconWidth = this.icon_size > 0 ? this.icon_size : 0;
-        const padding = Math.max(0, Math.round(this.text_width_padding || 0));
-        if (iconWidth > 0) {
-            return iconWidth + padding;
-        }
-
-        return Math.max(padding, Math.round(BASE_TILE_WIDTH * 0.85));
-    },
-
     _configureItemLabel: function(label) {
-        label.clutter_text.set_line_wrap(true);
-        label.clutter_text.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR);
         label.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
 
         if (this._isListLayout()) {
+            label.clutter_text.set_line_wrap(true);
+            label.clutter_text.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR);
             label.x_expand = true;
             label.y_expand = false;
             label.set_x_align(Clutter.ActorAlign.FILL);
@@ -1681,6 +1759,10 @@ TheLauncherDesklet.prototype = {
             return;
         }
 
+        // Tile labels must stay single-line. Wrapping at the label width
+        // inflates Clutter's preferred height and leaves empty panel space
+        // below the visible (ellipsized) tiles.
+        label.clutter_text.set_line_wrap(false);
         label.set_width(this._getTileTextWidth());
         label.x_align = this._getTextAlign();
     },
